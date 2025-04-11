@@ -1,40 +1,48 @@
-import subprocess
-import sys
-
-# Try installing lxml if it isn't installed already
-try:
-    import lxml
-except ImportError:
-    print("lxml not found. Installing...")
-    subprocess.check_call([sys.executable, "-m", "pip", "install", "lxml"])
-
-# Now you can import your other dependencies like lxml and other modules
 import time
 import re
 import pandas as pd
 import streamlit as st
-from lxml import html
-import requests
-from bs4 import BeautifulSoup  # Optional if you switch to BeautifulSoup
+from selenium import webdriver
+from selenium.webdriver.chrome.service import Service
+from selenium.webdriver.common.by import By
+from webdriver_manager.chrome import ChromeDriverManager
+from selenium.webdriver.chrome.options import Options
+from lxml import html  # Now this works because lxml is in requirements.txt
 
-# Your code logic here
+# Function to get the full text from the webpage using Selenium in headless mode
 def get_population_density_text(zip_code):
+    # Set up the Selenium WebDriver with headless mode (no UI)
+    chrome_options = Options()
+    chrome_options.add_argument("--headless")  # Run browser in headless mode
+    
+    driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=chrome_options)
+    
     url = f"https://www.zip-codes.com/zip-code/{zip_code}/zip-code-{zip_code}.asp"
-    response = requests.get(url)
-
-    if response.status_code == 200:
-        tree = html.fromstring(response.content)
-        try:
-            population_text = tree.xpath("//p[contains(text(), 'population density of')]")
-            return population_text[0].text if population_text else None
-        except Exception as e:
-            print(f"Error: {e}")
-            return None
-    else:
-        print(f"Failed to retrieve page for {zip_code}")
+    driver.get(url)
+    
+    # Wait for the page to load completely (adjust the sleep time if needed)
+    time.sleep(3)
+    
+    try:
+        # Extracting the population density text
+        population_text = driver.find_element(By.XPATH, "//p[contains(text(), 'population density of')]").text
+        driver.quit()
+        return population_text
+    except Exception as e:
+        print(f"Error: {e}")
+        driver.quit()
         return None
 
-# The rest of your code...
+# Function to extract population density from the full text
+def extract_population_density(text):
+    # Regular expression to extract the population density value
+    match = re.search(r'population density of ([\d,]+(?:\.\d+)?) people per square mile', text)
+    if match:
+        return match.group(1)  # This will return the population density number
+    else:
+        return None
+
+# Streamlit App
 def main():
     st.title("Population Density Finder")
 
