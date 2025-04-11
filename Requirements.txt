@@ -1,4 +1,6 @@
-streamlit==1.11.0
-pandas==1.4.1
-requests==2.27.1
-lxml==4.6.3
+pandas==2.2.3
+streamlit==1.44.1
+lxml==4.9.3
+requests==2.32.3
+selenium==4.7.2
+webdriver-manager==3.8.1
