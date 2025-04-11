@@ -2,34 +2,23 @@ import time
 import re
 import pandas as pd
 import streamlit as st
-from selenium import webdriver
-from selenium.webdriver.chrome.service import Service
-from selenium.webdriver.common.by import By
-from webdriver_manager.chrome import ChromeDriverManager
-from selenium.webdriver.chrome.options import Options
+import requests
+from bs4 import BeautifulSoup
 
-# Function to get the full text from the webpage using Selenium in headless mode
+# Function to get the full text from the webpage using requests and BeautifulSoup
 def get_population_density_text(zip_code):
-    # Set up the Selenium WebDriver with headless mode (no UI)
-    chrome_options = Options()
-    chrome_options.add_argument("--headless")  # Run browser in headless mode
-    
-    driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=chrome_options)
-    
     url = f"https://www.zip-codes.com/zip-code/{zip_code}/zip-code-{zip_code}.asp"
-    driver.get(url)
+    response = requests.get(url)
     
-    # Wait for the page to load completely (adjust the sleep time if needed)
-    time.sleep(3)
+    # Parse the HTML page with BeautifulSoup
+    soup = BeautifulSoup(response.text, "html.parser")
     
+    # Try to find the paragraph containing population density
     try:
-        # Extracting the population density text
-        population_text = driver.find_element(By.XPATH, "//p[contains(text(), 'population density of')]").text
-        driver.quit()
+        # Select the paragraph with the population density information
+        population_text = soup.select_one("div.statContainer:nth-of-type(6) p:nth-of-type(2)").get_text()
         return population_text
-    except Exception as e:
-        print(f"Error: {e}")
-        driver.quit()
+    except AttributeError:
         return None
 
 # Function to extract population density from the full text
