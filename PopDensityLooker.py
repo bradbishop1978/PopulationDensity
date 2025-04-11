@@ -3,22 +3,30 @@ import re
 import pandas as pd
 import streamlit as st
 import requests
-from bs4 import BeautifulSoup
+from lxml import html
 
-# Function to get the full text from the webpage using requests and BeautifulSoup
+# Function to get the full text from the webpage using requests and lxml
 def get_population_density_text(zip_code):
+    # Construct the URL for the given zip code
     url = f"https://www.zip-codes.com/zip-code/{zip_code}/zip-code-{zip_code}.asp"
-    response = requests.get(url)
     
-    # Parse the HTML page with BeautifulSoup
-    soup = BeautifulSoup(response.text, "html.parser")
-    
-    # Try to find the paragraph containing population density
+    # Send a GET request to the URL
     try:
-        # Select the paragraph with the population density information
-        population_text = soup.select_one("div.statContainer:nth-of-type(6) p:nth-of-type(2)").get_text()
-        return population_text
-    except AttributeError:
+        response = requests.get(url)
+        response.raise_for_status()  # Check if request was successful
+    except requests.exceptions.RequestException as e:
+        print(f"Error fetching the webpage: {e}")
+        return None
+    
+    # Parse the HTML content of the page with lxml
+    tree = html.fromstring(response.content)
+    
+    # Use XPath to extract the population density text
+    population_text = tree.xpath('//p[contains(text(), "population density of")]/text()')
+    
+    if population_text:
+        return population_text[0]
+    else:
         return None
 
 # Function to extract population density from the full text
