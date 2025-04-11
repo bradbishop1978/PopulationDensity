@@ -1,44 +1,40 @@
+import subprocess
+import sys
+
+# Try installing lxml if it isn't installed already
+try:
+    import lxml
+except ImportError:
+    print("lxml not found. Installing...")
+    subprocess.check_call([sys.executable, "-m", "pip", "install", "lxml"])
+
+# Now you can import your other dependencies like lxml and other modules
 import time
 import re
 import pandas as pd
 import streamlit as st
-import requests
 from lxml import html
+import requests
+from bs4 import BeautifulSoup  # Optional if you switch to BeautifulSoup
 
-# Function to get the full text from the webpage using requests and lxml
+# Your code logic here
 def get_population_density_text(zip_code):
-    # Construct the URL for the given zip code
     url = f"https://www.zip-codes.com/zip-code/{zip_code}/zip-code-{zip_code}.asp"
-    
-    # Send a GET request to the URL
-    try:
-        response = requests.get(url)
-        response.raise_for_status()  # Check if request was successful
-    except requests.exceptions.RequestException as e:
-        print(f"Error fetching the webpage: {e}")
-        return None
-    
-    # Parse the HTML content of the page with lxml
-    tree = html.fromstring(response.content)
-    
-    # Use XPath to extract the population density text
-    population_text = tree.xpath('//p[contains(text(), "population density of")]/text()')
-    
-    if population_text:
-        return population_text[0]
+    response = requests.get(url)
+
+    if response.status_code == 200:
+        tree = html.fromstring(response.content)
+        try:
+            population_text = tree.xpath("//p[contains(text(), 'population density of')]")
+            return population_text[0].text if population_text else None
+        except Exception as e:
+            print(f"Error: {e}")
+            return None
     else:
+        print(f"Failed to retrieve page for {zip_code}")
         return None
 
-# Function to extract population density from the full text
-def extract_population_density(text):
-    # Regular expression to extract the population density value
-    match = re.search(r'population density of ([\d,]+(?:\.\d+)?) people per square mile', text)
-    if match:
-        return match.group(1)  # This will return the population density number
-    else:
-        return None
-
-# Streamlit App
+# The rest of your code...
 def main():
     st.title("Population Density Finder")
 
