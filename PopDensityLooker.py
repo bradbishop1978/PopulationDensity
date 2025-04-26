@@ -1,53 +1,84 @@
-import time
 import re
+import time
 import pandas as pd
 import streamlit as st
-from selenium import webdriver
-from selenium.webdriver.chrome.service import Service
-from selenium.webdriver.common.by import By
-from webdriver_manager.chrome import ChromeDriverManager
-from selenium.webdriver.chrome.options import Options
-from lxml import html  # Now this works because lxml is in requirements.txt
+import requests
+from bs4 import BeautifulSoup
+from concurrent.futures import ThreadPoolExecutor
 
-# Function to get the full text from the webpage using Selenium in headless mode
+# Function to get the population density text using requests and BeautifulSoup
 def get_population_density_text(zip_code):
-    # Set up the Selenium WebDriver with headless mode (no UI)
-    chrome_options = Options()
-    chrome_options.add_argument("--headless")  # Run browser in headless mode
-    
-    driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=chrome_options)
-    
     url = f"https://www.zip-codes.com/zip-code/{zip_code}/zip-code-{zip_code}.asp"
-    driver.get(url)
     
-    # Wait for the page to load completely (adjust the sleep time if needed)
-    time.sleep(3)
+    # Set headers to mimic a browser request
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+        'Accept-Language': 'en-US,en;q=0.5',
+        'Connection': 'keep-alive',
+        'Upgrade-Insecure-Requests': '1',
+    }
     
     try:
-        # Extracting the population density text
-        population_text = driver.find_element(By.XPATH, "//p[contains(text(), 'population density of')]").text
-        driver.quit()
-        return population_text
+        # Make the request
+        response = requests.get(url, headers=headers, timeout=10)
+        response.raise_for_status()  # Raise an exception for HTTP errors
+        
+        # Parse the HTML content
+        soup = BeautifulSoup(response.text, 'html.parser')
+        
+        # Find paragraphs that contain population density information
+        paragraphs = soup.find_all('p')
+        for p in paragraphs:
+            if p.text and 'population density of' in p.text:
+                return p.text.strip()
+        
+        return None
+    except requests.exceptions.RequestException as e:
+        st.error(f"Error fetching data for zip code {zip_code}: {e}")
+        return None
     except Exception as e:
-        print(f"Error: {e}")
-        driver.quit()
+        st.error(f"Unexpected error for zip code {zip_code}: {e}")
         return None
 
 # Function to extract population density from the full text
 def extract_population_density(text):
+    if not text:
+        return None
+        
     # Regular expression to extract the population density value
     match = re.search(r'population density of ([\d,]+(?:\.\d+)?) people per square mile', text)
     if match:
-        return match.group(1)  # This will return the population density number
+        # Remove commas and convert to float
+        density = match.group(1).replace(',', '')
+        try:
+            return float(density)
+        except ValueError:
+            return density
     else:
         return None
+
+# Function to process a single zip code
+def process_zip_code(zip_code):
+    # Add a small delay to avoid overwhelming the server
+    time.sleep(0.5)
+    
+    text = get_population_density_text(str(zip_code))
+    density = extract_population_density(text) if text else None
+    
+    return {
+        'zipcode': zip_code,
+        'Full Text': text,
+        'Population Density': density if density is not None else "Not Found"
+    }
 
 # Streamlit App
 def main():
     st.title("Population Density Finder")
+    st.write("Upload a CSV with zip codes to find population density information.")
 
     # Upload CSV file
-    uploaded_file = st.file_uploader("Upload a CSV with zip codes in column A", type="csv")
+    uploaded_file = st.file_uploader("Upload a CSV with zip codes in a column named 'ZipCode'", type="csv")
     
     if uploaded_file is not None:
         # Read the uploaded CSV into a pandas DataFrame
@@ -61,42 +92,95 @@ def main():
             st.error("The uploaded CSV must have a 'ZipCode' column (case-insensitive).")
             return
         
+        # Display a preview of the data
+        st.subheader("Preview of uploaded data")
+        st.dataframe(df.head())
+        
+        # Display the total number of zip codes
+        total_zip_codes = len(df)
+        st.write(f"Total zip codes to process: {total_zip_codes}")
+        
+        # Options for processing
+        st.subheader("Processing Options")
+        
+        # Option to use parallel processing
+        use_parallel = st.checkbox("Use parallel processing (faster but may get blocked)", value=False)
+        
+        max_workers = 1
+        if use_parallel:
+            max_workers = st.slider("Number of parallel workers", min_value=2, max_value=5, value=3, 
+                                   help="More workers = faster, but higher chance of being blocked")
+        
         # Display a button to initiate the search
         if st.button('Find Population Density'):
-            # Create columns for the full text and population density
-            df['Full Text'] = None
-            df['Population Density'] = None
+            # Create a progress bar
+            progress_bar = st.progress(0)
+            status_text = st.empty()
             
-            # Progress bar setup
-            progress_text = st.empty()  # Text to display progress (e.g., "1 of 10")
-            progress_bar = st.progress(0)  # Progress bar that will be updated
+            # Create a new DataFrame to store results
+            results = []
             
-            # Process the zip codes one by one and update progress bar
-            for i, zip_code in enumerate(df['zipcode'], 1):
-                # Update the progress bar and text
-                progress_text.text(f"{i} of {len(df)}")
-                progress_bar.progress(i / len(df))
-                
-                # Scrape population density text and extract value
-                text = get_population_density_text(str(zip_code))
-                df.at[i - 1, 'Full Text'] = text
-                if text:
-                    df.at[i - 1, 'Population Density'] = extract_population_density(text)
+            with st.spinner('Processing zip codes...'):
+                if use_parallel:
+                    # Process zip codes in parallel
+                    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                        # Submit all tasks and get future objects
+                        future_to_zipcode = {executor.submit(process_zip_code, zip_code): zip_code 
+                                            for zip_code in df['zipcode']}
+                        
+                        # Process results as they complete
+                        for i, future in enumerate(future_to_zipcode):
+                            try:
+                                result = future.result()
+                                results.append(result)
+                            except Exception as e:
+                                st.error(f"Error processing zip code: {e}")
+                                results.append({
+                                    'zipcode': future_to_zipcode[future],
+                                    'Full Text': None,
+                                    'Population Density': f"Error: {str(e)}"
+                                })
+                            
+                            # Update progress
+                            progress = (i + 1) / total_zip_codes
+                            progress_bar.progress(progress)
+                            status_text.text(f"Processed {i + 1} of {total_zip_codes} zip codes ({int(progress * 100)}%)")
                 else:
-                    df.at[i - 1, 'Population Density'] = "Not Found"
-                
-                # Optional: Sleep between requests to avoid overloading the server
-                time.sleep(1)
-
+                    # Process zip codes sequentially
+                    for i, zip_code in enumerate(df['zipcode']):
+                        result = process_zip_code(zip_code)
+                        results.append(result)
+                        
+                        # Update progress
+                        progress = (i + 1) / total_zip_codes
+                        progress_bar.progress(progress)
+                        status_text.text(f"Processed {i + 1} of {total_zip_codes} zip codes ({int(progress * 100)}%)")
+            
+            # Convert results to DataFrame
+            results_df = pd.DataFrame(results)
+            
+            # Merge with original DataFrame to preserve other columns
+            merged_df = pd.merge(df, results_df[['zipcode', 'Full Text', 'Population Density']], 
+                                on='zipcode', how='left')
+            
             # Display the resulting dataframe with the population densities
-            st.write(df)
+            st.subheader("Results")
+            st.dataframe(merged_df)
+            
+            # Show statistics
+            st.subheader("Statistics")
+            found_count = merged_df['Population Density'].apply(
+                lambda x: x != "Not Found" and not str(x).startswith("Error")
+            ).sum()
+            
+            st.write(f"Successfully found data for {found_count} out of {total_zip_codes} zip codes ({found_count/total_zip_codes:.1%})")
             
             # Prepare the updated dataframe for download
-            csv = df.to_csv(index=False)
+            csv = merged_df.to_csv(index=False)
             st.download_button(
-                label="Download Updated CSV",
+                label="Download Results as CSV",
                 data=csv,
-                file_name="updated_zip_codes.csv",
+                file_name="population_density_results.csv",
                 mime="text/csv"
             )
 
