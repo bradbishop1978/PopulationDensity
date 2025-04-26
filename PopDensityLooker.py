@@ -2,51 +2,36 @@ import re
 import time
 import pandas as pd
 import streamlit as st
-import requests
-from bs4 import BeautifulSoup
+import urllib.request
 
-# Function to get the population density text using requests and BeautifulSoup
-def get_population_density_text(zip_code):
+# Function to get the population density using only urllib and regex
+def get_population_density(zip_code):
     url = f"https://www.zip-codes.com/zip-code/{zip_code}/zip-code-{zip_code}.asp"
     
-    # Set headers to mimic a browser request
-    headers = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
-    }
-    
     try:
-        # Make the request
-        response = requests.get(url, headers=headers, timeout=10)
+        # Create a request with a user agent
+        req = urllib.request.Request(
+            url, 
+            data=None, 
+            headers={
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+            }
+        )
         
-        # Check if request was successful
-        if response.status_code == 200:
-            # Parse the HTML content
-            soup = BeautifulSoup(response.text, 'html.parser')
+        # Make the request
+        with urllib.request.urlopen(req, timeout=10) as response:
+            html = response.read().decode('utf-8')
             
-            # Find paragraphs that contain population density information
-            paragraphs = soup.find_all('p')
-            for p in paragraphs:
-                if p.text and 'population density of' in p.text:
-                    return p.text.strip()
+            # Use regex to find population density directly in the HTML
+            pattern = r'population density of ([\d,]+(?:\.\d+)?) people per square mile'
+            match = re.search(pattern, html)
             
-            return None
-        else:
-            st.warning(f"Failed to fetch data for zip code {zip_code}: HTTP {response.status_code}")
-            return None
+            if match:
+                return match.group(1)  # Return the population density value
+            else:
+                return None
     except Exception as e:
         st.warning(f"Error for zip code {zip_code}: {e}")
-        return None
-
-# Function to extract population density from the full text
-def extract_population_density(text):
-    if not text:
-        return None
-        
-    # Regular expression to extract the population density value
-    match = re.search(r'population density of ([\d,]+(?:\.\d+)?) people per square mile', text)
-    if match:
-        return match.group(1)  # This will return the population density number
-    else:
         return None
 
 # Streamlit App
@@ -79,8 +64,7 @@ def main():
             progress_bar = st.progress(0)
             status_text = st.empty()
             
-            # Create columns for the full text and population density
-            df['Full Text'] = None
+            # Create a column for population density
             df['Population Density'] = None
             
             # Process the zip codes one by one and update progress bar
@@ -90,11 +74,10 @@ def main():
                 progress_bar.progress(progress)
                 status_text.text(f"Processing {i + 1} of {len(df)} zip codes ({int(progress * 100)}%)")
                 
-                # Scrape population density text and extract value
-                text = get_population_density_text(str(zip_code))
-                df.at[i, 'Full Text'] = text
-                if text:
-                    df.at[i, 'Population Density'] = extract_population_density(text)
+                # Get population density
+                density = get_population_density(str(zip_code))
+                if density:
+                    df.at[i, 'Population Density'] = density
                 else:
                     df.at[i, 'Population Density'] = "Not Found"
                 
