@@ -85,7 +85,7 @@ def search_single_zipcode(zip_code, delay=1.0):
             st.markdown("""
             <style>
             .result-box {
-                background-color: #f0f2f6;
+                background-color: #000000;
                 padding: 20px;
                 border-radius: 10px;
                 margin: 10px 0;
