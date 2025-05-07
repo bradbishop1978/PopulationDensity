@@ -78,22 +78,27 @@ def search_single_zipcode(zip_code, delay=1.0):
         
         # Display result
         if density:
+            # Display result in a more prominent way
             st.success(f"Population Density for {zip_code}: {density} people per square mile")
             
-            # Create a single-row dataframe for download
-            result_df = pd.DataFrame({
-                'zipcode': [zip_code],
-                'Population Density': [density]
-            })
+            # Display result in a formatted box
+            st.markdown("""
+            <style>
+            .result-box {
+                background-color: #f0f2f6;
+                padding: 20px;
+                border-radius: 10px;
+                margin: 10px 0;
+            }
+            </style>
+            """, unsafe_allow_html=True)
             
-            # Provide download option
-            csv = result_df.to_csv(index=False)
-            st.download_button(
-                label="Download Result as CSV",
-                data=csv,
-                file_name=f"zipcode_{zip_code}_density.csv",
-                mime="text/csv"
-            )
+            st.markdown(f"""
+            <div class="result-box">
+                <h3>Result for Zip Code: {zip_code}</h3>
+                <p><strong>Population Density:</strong> {density} people per square mile</p>
+            </div>
+            """, unsafe_allow_html=True)
         else:
             st.error(f"Could not find population density information for zip code {zip_code}")
 
