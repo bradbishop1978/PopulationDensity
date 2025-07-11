@@ -5,6 +5,45 @@ import streamlit as st
 import urllib.request
 from urllib.error import URLError, HTTPError
 
+# Function to normalize zip codes (add leading zero for 4-digit zip codes)
+def normalize_zipcode(zip_code):
+    """
+    Normalize zip code by adding leading zero for 4-digit zip codes.
+    
+    Args:
+        zip_code (str): Input zip code
+        
+    Returns:
+        str: Normalized zip code with leading zero if needed
+    """
+    # Convert to string and strip whitespace
+    zip_code = str(zip_code).strip()
+    
+    # Handle 4-digit zip codes by adding leading zero
+    if re.match(r'^\d{4}$', zip_code):
+        return '0' + zip_code
+    
+    # Handle 4-digit zip codes with hyphen extension (e.g., "1234-5678")
+    if re.match(r'^\d{4}-\d{4}$', zip_code):
+        return '0' + zip_code
+    
+    # Return as-is for other formats (5-digit, 9-digit, etc.)
+    return zip_code
+
+# Function to validate zip code format after normalization
+def is_valid_zipcode(zip_code):
+    """
+    Validate if zip code is in correct format after normalization.
+    
+    Args:
+        zip_code (str): Zip code to validate
+        
+    Returns:
+        bool: True if valid format, False otherwise
+    """
+    # Check for 5-digit or 9-digit (5+4) format
+    return bool(re.match(r'^\d{5}(-\d{4})?$', zip_code))
+
 # Function to get the population density using only urllib with better encoding handling
 def get_population_density(zip_code):
     url = f"https://www.zip-codes.com/zip-code/{zip_code}/zip-code-{zip_code}.asp"
@@ -109,14 +148,16 @@ def process_csv_file(uploaded_file, delay=1.0):
     
     # Make the column names lowercase for case-insensitive checking
     df.columns = df.columns.str.lower()
-
     # Check if the column 'zipcode' exists
     if 'zipcode' not in df.columns:
         st.error("The uploaded CSV must have a 'ZipCode' column (case-insensitive).")
         return
     
+    # Normalize zip codes in the dataframe
+    df['zipcode'] = df['zipcode'].apply(normalize_zipcode)
+    
     # Display a preview of the data
-    st.subheader("Preview of uploaded data")
+    st.subheader("Preview of uploaded data (with normalized zip codes)")
     st.dataframe(df.head())
     
     # Add options for processing
@@ -185,6 +226,9 @@ def process_csv_file(uploaded_file, delay=1.0):
 def main():
     st.title("Population Density Finder")
     
+    # Add information about zip code handling
+    st.info("💡 **Tip:** This app automatically handles 4-digit zip codes by adding a leading zero (e.g., 1234 becomes 01234)")
+    
     # Add tabs for different search options
     tab1, tab2 = st.tabs(["Single Zip Code Search", "Batch CSV Processing"])
     
@@ -193,7 +237,7 @@ def main():
         st.write("Enter a zip code to find its population density.")
         
         # Input for single zip code
-        zip_code = st.text_input("Enter Zip Code", placeholder="e.g., 90210")
+        zip_code = st.text_input("Enter Zip Code", placeholder="e.g., 90210 or 1234")
         
         # Add delay option
         delay = st.slider(
@@ -208,17 +252,25 @@ def main():
         # Search button
         if st.button("Search", key="single_search"):
             if zip_code:
-                # Validate zip code format (basic validation)
-                if re.match(r'^\d{5}(-\d{4})?$', zip_code):
-                    search_single_zipcode(zip_code, delay)
+                # Normalize the zip code first
+                normalized_zip = normalize_zipcode(zip_code)
+                
+                # Show normalization if it occurred
+                if normalized_zip != zip_code:
+                    st.info(f"Normalized zip code: {zip_code} → {normalized_zip}")
+                
+                # Validate normalized zip code format
+                if is_valid_zipcode(normalized_zip):
+                    search_single_zipcode(normalized_zip, delay)
                 else:
-                    st.error("Please enter a valid 5-digit zip code (or 9-digit with hyphen)")
+                    st.error("Please enter a valid 4 or 5-digit zip code (or 9-digit with hyphen)")
             else:
                 st.warning("Please enter a zip code to search")
     
     # Tab 2: Batch CSV Processing (existing functionality)
     with tab2:
         st.write("Upload a CSV with zip codes to find population density information.")
+        st.write("**Note:** 4-digit zip codes will be automatically normalized by adding a leading zero.")
         
         # Upload CSV file
         uploaded_file = st.file_uploader("Upload a CSV with zip codes in a column named 'ZipCode'", type="csv")
