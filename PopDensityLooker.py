@@ -1,171 +1,230 @@
-import streamlit as st
-import pandas as pd
-import geopandas
-import pydeck as pdk
-import json
-from urllib.request import urlopen
 import re
+import time
+import pandas as pd
+import streamlit as st
+import urllib.request
+from urllib.error import URLError, HTTPError
 
-# Function to format zip codes (add leading zeros for 4-digit codes)
-def format_zipcode(zip_code):
-    """Format zip code to ensure it's 5 digits by adding leading zeros if needed."""
-    zip_str = str(zip_code).strip()
-    zip_digits = re.sub(r'\D', '', zip_str)  # Remove non-digits
-    if len(zip_digits) == 4:
-        return zip_digits.zfill(5)  # Add leading zero
-    elif len(zip_digits) == 5:
-        return zip_digits
-    else:
-        return zip_str  # Return original if not 4 or 5 digits
-
-# Function to load GeoJSON data
-@st.cache_data
-def load_geojson(url):
-    with urlopen(url) as response:
-        geojson_data = json.load(response)
-    return geojson_data
-
-# Function to load data
-@st.cache_data
-def load_data(url):
-    df = pd.read_csv(url, dtype={'zip': str})
-    df.rename(columns={'zip': 'ZipCode'}, inplace=True)
-    return df
-
-# Function to create GeoDataFrame
-@st.cache_data
-def create_geodataframe(df, geojson):
-    gdf = geopandas.GeoDataFrame.from_features(geojson['features'])
-    gdf = gdf.rename(columns={'zip': 'ZipCode'})
-    gdf['ZipCode'] = gdf['ZipCode'].astype(str)
-    merged = gdf.merge(df, on='ZipCode', how='left')
-    merged['density'] = merged['population'] / merged.area
-    return merged
-
-# Function to create pydeck layer
-def create_pydeck_layer(merged, color_range):
-    layer = pdk.Layer(
-        "GeoJsonLayer",
-        merged.__geo_interface__,
-        opacity=0.8,
-        stroked=False,
-        filled=True,
-        extruded=False,
-        get_fill_color=f"{{properties.density > {color_range[0]} && properties.density <= {color_range[1]} ? [255, 0, 0, 255] :\
-                         properties.density > {color_range[1]} && properties.density <= {color_range[2]} ? [255, 128, 0, 255] :\
-                         properties.density > {color_range[2]} && properties.density <= {color_range[3]} ? [255, 255, 0, 255] :\
-                         properties.density > {color_range[3]} && properties.density <= {color_range[4]} ? [0, 255, 0, 255] :\
-                         properties.density > {color_range[4]} ? [0, 0, 255, 255] : [128, 128, 128, 255]}}",
-        get_line_color=[255, 255, 255],
-        get_line_width=1,
-        pickable=True,
-        auto_highlight=True
-    )
-    return layer
-
-# Function to process uploaded CSV file
-def process_csv_file(uploaded_file):
-    if uploaded_file is not None:
-        try:
-            uploaded_file.seek(0)
-            original_df = pd.read_csv(uploaded_file, dtype={'ZipCode': str})
-
-            # Check if 'ZipCode' column exists
-            if 'ZipCode' not in original_df.columns:
-                st.error("The uploaded CSV file must contain a column named 'ZipCode'.")
-                return None
-
-            # Check if 'population' column exists
-            if 'population' not in original_df.columns:
-                st.error("The uploaded CSV file must contain a column named 'population'.")
-                return None
-
-            # Basic data validation (example: check for non-numeric population)
-            if not pd.to_numeric(original_df['population'], errors='coerce').notna().all():
-                st.error("The 'population' column contains non-numeric values. Please ensure it contains only numbers.")
-                return None
-
-            # Format all zip codes in the dataframe
-            original_df['ZipCode'] = original_df['ZipCode'].apply(format_zipcode)
-
-            return original_df
-        except Exception as e:
-            st.error(f"Error processing the uploaded CSV file: {e}")
-            return None
-    return None
-
-# Main Streamlit app
-def main():
-    st.title("Zip Code Population Density Viewer")
-
-    # Sidebar options
-    data_source = st.sidebar.radio("Select Data Source:", ["Preloaded Data", "Upload CSV"])
-
-    if data_source == "Preloaded Data":
-        # URL for the GeoJSON data
-        geojson_url = "https://raw.githubusercontent.com/OpenDataDE/Germany-zip-codes/main/geojson/zip_codes_germany.geojson"
-        # URL for the CSV data
-        csv_url = "https://raw.githubusercontent.com/plotly/datasets/master/2011_us_ag_exports.csv"
-
-        # Load data
-        geojson_data = load_geojson(geojson_url)
-        df = load_data(csv_url)
-
-    elif data_source == "Upload CSV":
-        uploaded_file = st.sidebar.file_uploader("Upload your CSV file", type="csv")
-        if uploaded_file is not None:
-            df = process_csv_file(uploaded_file)
-            if df is None:
-                return  # Stop if there's an error in processing the CSV
-
-            # URL for the GeoJSON data (still needed for zip code boundaries)
-            geojson_url = "https://raw.githubusercontent.com/OpenDataDE/Germany-zip-codes/main/geojson/zip_codes_germany.geojson"
-            geojson_data = load_geojson(geojson_url)
-
-        else:
-            st.info("Please upload a CSV file to proceed.")
-            return  # Stop if no file is uploaded
-
-    else:
-        st.error("Invalid data source selected.")
-        return
-
-    # Color range selection
-    st.sidebar.header("Density Color Range")
-    color_range = [
-        st.sidebar.number_input("Range 1 (Red): Max Density", value=100),
-        st.sidebar.number_input("Range 2 (Orange): Max Density", value=500),
-        st.sidebar.number_input("Range 3 (Yellow): Max Density", value=1000),
-        st.sidebar.number_input("Range 4 (Green): Max Density", value=2000),
-        st.sidebar.number_input("Range 5 (Blue): Max Density", value=5000)
-    ]
-
-    # Create GeoDataFrame
+# Function to get the population density using only urllib with better encoding handling
+def get_population_density(zip_code):
+    url = f"https://www.zip-codes.com/zip-code/{zip_code}/zip-code-{zip_code}.asp"
+    
     try:
-        merged = create_geodataframe(df, geojson_data)
+        # Create a request with a user agent
+        req = urllib.request.Request(
+            url, 
+            data=None, 
+            headers={
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+            }
+        )
+        
+        # Make the request
+        with urllib.request.urlopen(req, timeout=10) as response:
+            # Read the raw bytes
+            html_bytes = response.read()
+            
+            # Try different encodings
+            encodings = ['utf-8', 'latin-1', 'windows-1252', 'iso-8859-1']
+            html = None
+            
+            for encoding in encodings:
+                try:
+                    html = html_bytes.decode(encoding, errors='replace')
+                    break  # If successful, break the loop
+                except UnicodeDecodeError:
+                    continue
+            
+            if html is None:
+                # If all encodings fail, use 'replace' mode with utf-8
+                html = html_bytes.decode('utf-8', errors='replace')
+            
+            # Use regex to find population density directly in the HTML
+            pattern = r'population density of ([\d,]+(?:\.\d+)?) people per square mile'
+            match = re.search(pattern, html)
+            
+            if match:
+                return match.group(1)  # Return the population density value
+            else:
+                # Try an alternative pattern in case the format is different
+                alt_pattern = r'Population\s+Density</td>\s*<td[^>]*>([\d,\.]+)'
+                alt_match = re.search(alt_pattern, html)
+                if alt_match:
+                    return alt_match.group(1)
+                return None
+    except HTTPError as e:
+        if e.code == 404:
+            st.warning(f"Zip code {zip_code} not found (404 error)")
+        else:
+            st.warning(f"HTTP Error for zip code {zip_code}: {e.code} {e.reason}")
+        return None
+    except URLError as e:
+        st.warning(f"URL Error for zip code {zip_code}: {e.reason}")
+        return None
     except Exception as e:
-        st.error(f"Error creating GeoDataFrame: {e}.  Check that your CSV has 'ZipCode' and 'population' columns.")
+        st.warning(f"Error for zip code {zip_code}: {str(e)}")
+        return None
+
+# Function to handle single zip code search
+def search_single_zipcode(zip_code, delay=1.0):
+    st.subheader(f"Searching for Zip Code: {zip_code}")
+    
+    with st.spinner(f"Looking up population density for {zip_code}..."):
+        # Add a small delay to simulate processing
+        time.sleep(delay)
+        
+        # Get population density
+        density = get_population_density(zip_code)
+        
+        # Display result
+        if density:
+            # Display result in a more prominent way
+            st.success(f"Population Density for {zip_code}: {density} people per square mile")
+            
+            # Display result in a formatted box
+            st.markdown("""
+            <style>
+            .result-box {
+                background-color: #000000;
+                padding: 20px;
+                border-radius: 10px;
+                margin: 10px 0;
+            }
+            </style>
+            """, unsafe_allow_html=True)
+            
+            st.markdown(f"""
+            <div class="result-box">
+                <h3>Result for Zip Code: {zip_code}</h3>
+                <p><strong>Population Density:</strong> {density} people per square mile</p>
+            </div>
+            """, unsafe_allow_html=True)
+        else:
+            st.error(f"Could not find population density information for zip code {zip_code}")
+
+# Function to process CSV file
+def process_csv_file(uploaded_file, delay=1.0):
+    # Read the uploaded CSV into a pandas DataFrame
+    df = pd.read_csv(uploaded_file, dtype={'ZipCode': str})
+    
+    # Make the column names lowercase for case-insensitive checking
+    df.columns = df.columns.str.lower()
+
+    # Check if the column 'zipcode' exists
+    if 'zipcode' not in df.columns:
+        st.error("The uploaded CSV must have a 'ZipCode' column (case-insensitive).")
         return
-
-    # Create pydeck layer
-    layer = create_pydeck_layer(merged, color_range)
-
-    # Set initial viewport
-    view_state = pdk.ViewState(
-        latitude=51.5,
-        longitude=10.5,
-        zoom=5,
-        pitch=0
+    
+    # Display a preview of the data
+    st.subheader("Preview of uploaded data")
+    st.dataframe(df.head())
+    
+    # Add options for processing
+    st.subheader("Processing Options")
+    
+    delay = st.slider(
+        "Delay between requests (seconds)", 
+        min_value=0.5, 
+        max_value=5.0, 
+        value=1.0, 
+        step=0.5,
+        help="Longer delay reduces the chance of being blocked by the website"
     )
+    
+    # Display a button to initiate the search
+    if st.button('Find Population Density'):
+        # Create a progress bar
+        progress_bar = st.progress(0)
+        status_text = st.empty()
+        
+        # Create a column for population density
+        df['Population Density'] = None
+        
+        # Create counters for statistics
+        success_count = 0
+        not_found_count = 0
+        
+        # Process the zip codes one by one and update progress bar
+        for i, zip_code in enumerate(df['zipcode']):
+            # Update the progress bar and text
+            progress = (i + 1) / len(df)
+            progress_bar.progress(progress)
+            status_text.text(f"Processing {i + 1} of {len(df)} zip codes ({int(progress * 100)}%)")
+            
+            # Get population density
+            density = get_population_density(str(zip_code))
+            if density:
+                df.at[i, 'Population Density'] = density
+                success_count += 1
+            else:
+                df.at[i, 'Population Density'] = "Not Found"
+                not_found_count += 1
+            
+            # Sleep between requests to avoid overloading the server
+            time.sleep(delay)
+        
+        # Display statistics
+        st.subheader("Processing Statistics")
+        st.write(f"✅ Successfully found: {success_count} ({success_count/len(df):.1%})")
+        st.write(f"❌ Not found: {not_found_count} ({not_found_count/len(df):.1%})")
+        
+        # Display the resulting dataframe with the population densities
+        st.subheader("Results")
+        st.dataframe(df)
+        
+        # Prepare the updated dataframe for download
+        csv = df.to_csv(index=False)
+        st.download_button(
+            label="Download Updated CSV",
+            data=csv,
+            file_name="updated_zip_codes.csv",
+            mime="text/csv"
+        )
 
-    # Render map
-    r = pdk.Deck(
-        layers=[layer],
-        initial_view_state=view_state,
-        tooltip={"text": "ZipCode: {properties.ZipCode}\nDensity: {properties.density}"}
-    )
-
-    st.pydeck_chart(r)
+# Streamlit App
+def main():
+    st.title("Population Density Finder")
+    
+    # Add tabs for different search options
+    tab1, tab2 = st.tabs(["Single Zip Code Search", "Batch CSV Processing"])
+    
+    # Tab 1: Single Zip Code Search
+    with tab1:
+        st.write("Enter a zip code to find its population density.")
+        
+        # Input for single zip code
+        zip_code = st.text_input("Enter Zip Code", placeholder="e.g., 90210")
+        
+        # Add delay option
+        delay = st.slider(
+            "Request delay (seconds)", 
+            min_value=0.0, 
+            max_value=3.0, 
+            value=0.5, 
+            step=0.5,
+            help="Delay before showing results"
+        )
+        
+        # Search button
+        if st.button("Search", key="single_search"):
+            if zip_code:
+                # Validate zip code format (basic validation)
+                if re.match(r'^\d{5}(-\d{4})?$', zip_code):
+                    search_single_zipcode(zip_code, delay)
+                else:
+                    st.error("Please enter a valid 5-digit zip code (or 9-digit with hyphen)")
+            else:
+                st.warning("Please enter a zip code to search")
+    
+    # Tab 2: Batch CSV Processing (existing functionality)
+    with tab2:
+        st.write("Upload a CSV with zip codes to find population density information.")
+        
+        # Upload CSV file
+        uploaded_file = st.file_uploader("Upload a CSV with zip codes in a column named 'ZipCode'", type="csv")
+        
+        if uploaded_file is not None:
+            process_csv_file(uploaded_file)
 
 if __name__ == "__main__":
     main()
