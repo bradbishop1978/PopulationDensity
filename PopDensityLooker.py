@@ -105,7 +105,7 @@ def search_single_zipcode(zip_code, delay=1.0):
 # Function to process CSV file
 def process_csv_file(uploaded_file, delay=1.0):
     # Read the uploaded CSV into a pandas DataFrame
-    df = pd.read_csv(uploaded_file)
+    df = pd.read_csv(uploaded_file, dtype={'ZipCode': str})
     
     # Make the column names lowercase for case-insensitive checking
     df.columns = df.columns.str.lower()
