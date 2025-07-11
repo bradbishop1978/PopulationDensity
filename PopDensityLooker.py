@@ -4,6 +4,19 @@ import geopandas
 import pydeck as pdk
 import json
 from urllib.request import urlopen
+import re
+
+# Function to format zip codes (add leading zeros for 4-digit codes)
+def format_zipcode(zip_code):
+    """Format zip code to ensure it's 5 digits by adding leading zeros if needed."""
+    zip_str = str(zip_code).strip()
+    zip_digits = re.sub(r'\D', '', zip_str)  # Remove non-digits
+    if len(zip_digits) == 4:
+        return zip_digits.zfill(5)  # Add leading zero
+    elif len(zip_digits) == 5:
+        return zip_digits
+    else:
+        return zip_str  # Return original if not 4 or 5 digits
 
 # Function to load GeoJSON data
 @st.cache_data
@@ -71,6 +84,9 @@ def process_csv_file(uploaded_file):
             if not pd.to_numeric(original_df['population'], errors='coerce').notna().all():
                 st.error("The 'population' column contains non-numeric values. Please ensure it contains only numbers.")
                 return None
+
+            # Format all zip codes in the dataframe
+            original_df['ZipCode'] = original_df['ZipCode'].apply(format_zipcode)
 
             return original_df
         except Exception as e:
